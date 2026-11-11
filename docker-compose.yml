@@ -1,0 +1,261 @@
+services:
+  # ==========================================================
+  # DIFY CORE SERVICES
+  # ==========================================================
+
+  dify-db:
+    image: postgres:15-alpine
+    container_name: dify-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DIFY_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DIFY_DB_PASSWORD:-dify123456}
+      POSTGRES_DB: ${DIFY_DB_DATABASE:-dify}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - dify_db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  dify-redis:
+    image: redis:7-alpine
+    container_name: dify-redis
+    restart: always
+    command: redis-server --requirepass ${DIFY_REDIS_PASSWORD:-difyredis123}
+    volumes:
+      - dify_redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${DIFY_REDIS_PASSWORD:-difyredis123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  dify-weaviate:
+    image: semitechnologies/weaviate:1.19.0
+    container_name: dify-weaviate
+    restart: always
+    volumes:
+      - dify_weaviate_data:/var/lib/weaviate
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      ENABLE_MODULES: ''
+      CLUSTER_HOSTNAME: 'node1'
+
+  dify-api:
+    image: langgenius/dify-api:0.6.11
+    container_name: dify-api
+    restart: always
+    environment:
+      CONSOLE_PORT: "5001"
+      CONSOLE_API_URL: ${CONSOLE_API_URL:-http://localhost:5001}
+      CONSOLE_WEB_URL: ${CONSOLE_WEB_URL:-http://localhost:3000}
+      SERVICE_API_URL: ${SERVICE_API_URL:-http://localhost:5001}
+      APP_MAX_EXECUTION_TIME: "600"
+      APP_MAX_ACTIVE_REQUESTS: "100"
+      DB_USERNAME: ${DIFY_DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DIFY_DB_PASSWORD:-dify123456}
+      DB_HOST: dify-db
+      DB_PORT: "5432"
+      DB_DATABASE: ${DIFY_DB_DATABASE:-dify}
+      REDIS_HOST: dify-redis
+      REDIS_PORT: "6379" # Corrected port (was 6300) to ensure consistent communication
+      REDIS_DB: "0"
+      REDIS_PASSWORD: ${DIFY_REDIS_PASSWORD:-difyredis123}
+      REDIS_USE_SSL: "false"
+      VECTOR_STORE: weaviate
+      WEAVIATE_ENDPOINT: http://dify-weaviate:8080
+      HTTP_CLIENT_MAX_CONNECTIONS: "200"
+      CELERY_BROKER_URL: redis://:${DIFY_REDIS_PASSWORD:-difyredis123}@dify-redis:6379/1
+    depends_on:
+      - dify-db
+      - dify-redis
+      - dify-weaviate
+    ports:
+      - "5001:5001"
+
+  dify-worker:
+    image: langgenius/dify-api:0.6.11 # Corrected image version (was 0.0.0) to prevent Docker pull errors
+    container_name: dify-worker
+    restart: always
+    command: python main.py celery
+    environment:
+      DB_USERNAME: ${DIFY_DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DIFY_DB_PASSWORD:-dify123456}
+      DB_HOST: dify-db
+      DB_PORT: "5432"
+      DB_DATABASE: ${DIFY_DB_DATABASE:-dify}
+      REDIS_HOST: dify-redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      REDIS_PASSWORD: ${DIFY_REDIS_PASSWORD:-difyredis123}
+      REDIS_USE_SSL: "false"
+      VECTOR_STORE: weaviate
+      WEAVIATE_ENDPOINT: http://dify-weaviate:8080
+      CELERY_BROKER_URL: redis://:${DIFY_REDIS_PASSWORD:-difyredis123}@dify-redis:6379/1
+    depends_on:
+      - dify-db
+      - dify-redis
+      - dify-weaviate
+
+  dify-web:
+    image: langgenius/dify-web:0.6.11
+    container_name: dify-web
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      CONSOLE_API_URL: ${CONSOLE_API_URL:-http://localhost:5001}
+      APP_API_URL: ${APP_API_URL:-http://localhost:5001}
+
+  # ==========================================================
+  # LANGFUSE OBSERVABILITY STACK
+  # ==========================================================
+
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: langfuse-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${LANGFUSE_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse123}
+      POSTGRES_DB: ${LANGFUSE_DB_DATABASE:-langfuse}
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse:
+    image: langfuse/langfuse:3
+    container_name: langfuse-server
+    restart: always
+    depends_on:
+      - langfuse-db
+    ports:
+      - "3030:3000"
+    environment:
+      DATABASE_URL: postgres://${LANGFUSE_DB_USERNAME:-postgres}:${LANGFUSE_DB_PASSWORD:-langfuse123}@langfuse-db:5432/${LANGFUSE_DB_DATABASE:-langfuse}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-mysecretsecret}
+      NEXTAUTH_URL: http://localhost:3030
+      LANGFUSE_INIT_PROJECT_NAME: "Dify Enterprise Production"
+      LANGFUSE_INIT_ORG_NAME: "Enterprise AI Org"
+      TELEMETRY_ENABLED: "false"
+
+  # ==========================================================
+  # OPIK OBSERVABILITY STACK (BY COMET)
+  # ==========================================================
+
+  opik-db:
+    image: postgres:15-alpine
+    container_name: opik-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${OPIK_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${OPIK_DB_PASSWORD:-opik123}
+      POSTGRES_DB: ${OPIK_DB_DATABASE:-opik}
+    volumes:
+      - opik_db_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  opik-clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: opik-clickhouse
+    restart: always
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - opik_clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_USER: ${OPIK_CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${OPIK_CLICKHOUSE_PASSWORD:-opikclick123}
+
+  opik:
+    image: cometml/opik-backend:latest
+    container_name: opik-server
+    restart: always
+    depends_on:
+      - opik-db
+      - opik-clickhouse
+    ports:
+      - "5151:5151"
+    environment:
+      OPIK_DATABASE_URL: jdbc:postgresql://opik-db:5432/${OPIK_DB_DATABASE:-opik}
+      OPIK_DATABASE_USER: ${OPIK_DB_USERNAME:-postgres}
+      OPIK_DATABASE_PASSWORD: ${OPIK_DB_PASSWORD:-opik123}
+      OPIK_CLICKHOUSE_HOST: opik-clickhouse
+      OPIK_CLICKHOUSE_PORT: "8123"
+      OPIK_CLICKHOUSE_USER: ${OPIK_CLICKHOUSE_USER:-default}
+      OPIK_CLICKHOUSE_PASSWORD: ${OPIK_CLICKHOUSE_PASSWORD:-opikclick123}
+      OPIK_CLICKHOUSE_DATABASE: default
+      OPIK_AUTH_ENABLED: "false"
+
+  # ==========================================================
+  # ARIZE PHOENIX & OPEN TELEMETRY SERVICES
+  # ==========================================================
+
+  phoenix:
+    image: arizephoenix/phoenix:latest # Corrected image namespace (was arize-phoenix:latest)
+    container_name: arize-phoenix
+    restart: always
+    ports:
+      - "6006:6006" # UI Web App Port
+      - "4317:4317" # OTLP gRPC Port
+      - "4318:4318" # OTLP HTTP Port
+    environment:
+      PHOENIX_PORT: "6006"
+      PHOENIX_HOST: "0.0.0.0"
+      PHOENIX_GRPC_PORT: "4317"
+      PHOENIX_PROJECT_NAME: "Dify-Telemetry-Gateway"
+    volumes:
+      - phoenix_data:/root/.phoenix
+
+  # ==========================================================
+  # CUSTOM TELEMETRY WEBHOOK GATEWAY (Python/FastAPI)
+  # ==========================================================
+
+  telemetry-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: telemetry-gateway
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      PHOENIX_COLLECTOR_ENDPOINT: "http://phoenix:4317"
+      PHOENIX_PROJECT: "Dify-Telemetry-Gateway"
+      DIFY_WEBHOOK_SECRET: "dify_enterprise_secure_token_abc123"
+    depends_on:
+      - phoenix
+
+volumes:
+  dify_db_data:
+  dify_redis_data:
+  dify_weaviate_data:
+  langfuse_db_data:
+  opik_db_data:
+  opik_clickhouse_data:
+  phoenix_data:

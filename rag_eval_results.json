@@ -1,0 +1,35 @@
+[
+    {
+        "case_id": 1,
+        "query": "Como posso redefinir minha senha corporativa expirada?",
+        "metrics": {
+            "context_relevance": 0.41,
+            "groundedness": 0.76,
+            "answer_relevance": 0.83,
+            "levenshtein_ratio": 0.61
+        },
+        "status": "PASS"
+    },
+    {
+        "case_id": 2,
+        "query": "Qual é a política de reembolso para viagens internacionais?",
+        "metrics": {
+            "context_relevance": 0.48,
+            "groundedness": 0.57,
+            "answer_relevance": 0.96,
+            "levenshtein_ratio": 0.36
+        },
+        "status": "PASS"
+    },
+    {
+        "case_id": 3,
+        "query": "Como solicitar acesso ao ambiente de produção na nuvem?",
+        "metrics": {
+            "context_relevance": 0.47,
+            "groundedness": 0.29,
+            "answer_relevance": 0.84,
+            "levenshtein_ratio": 0.17
+        },
+        "status": "WARN"
+    }
+]
